@@ -53,14 +53,19 @@ export function getUserProfile () {
 
     if (username?.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge)) {
       req.app.locals.abused_ssti_bug = true
-      const code = username?.substring(2, username.length - 1)
+      const code = (username?.startsWith('#{') && username?.endsWith('}'))
+        ? username.substring(2, username.length - 1)
+        : null
       try {
         if (!code) {
           throw new Error('Username is null')
         }
-        const singleQuoteRegex = /^'(?:[^'\\]|\\.)*'$/
-        const doubleQuoteRegex = /^"(?:[^"\\]|\\.)*"$/
-        const backtickRegex = /^`(?:[^`\\$]|\\.|\$(?!{))*`$/
+        if (code.includes('#{') || code.includes('!{')) {
+          throw new Error('Unsafe code execution blocked')
+        }
+        const singleQuoteRegex = /^'(?:[^'\\#!]|\\.|#(?!{)|!(?!{))*'$/
+        const doubleQuoteRegex = /^"(?:[^"\\#!]|\\.|#(?!{)|!(?!{))*"$/
+        const backtickRegex = /^`(?:[^`\\$#!]|\\\.|\$(?!{)|#(?!{)|!(?!{))*`$/
         const numericRegex = /^-?\d+(?:\.\d+)?$/
         const booleanRegex = /^(?:true|false|null|undefined)$/
 
@@ -73,7 +78,11 @@ export function getUserProfile () {
         if (!isSafe) {
           throw new Error('Unsafe code execution blocked')
         }
-        username = eval(code) // eslint-disable-line no-eval
+        const evaluated = eval(code) // eslint-disable-line no-eval
+        if (typeof evaluated === 'string' && (evaluated.includes('#{') || evaluated.includes('!{'))) {
+          throw new Error('Unsafe code execution blocked')
+        }
+        username = String(evaluated)
       } catch (err) {
         username = '\\' + username
       }
@@ -85,6 +94,7 @@ export function getUserProfile () {
     const theme = themes[themeKey] || themes['bluegrey-lightgreen']
 
     if (username) {
+      username = username.replace(/(\\)?#{/g, '\\#{').replace(/(\\)?!{/g, '\\!{')
       template = template.replace(/_username_/g, username)
     }
     template = template.replace(/_emailHash_/g, security.hash(user?.email))
